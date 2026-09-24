@@ -134,13 +134,15 @@ model User {
 }
 
 model WalletChallenge {
-  id            String    @id @default(cuid())
-  walletAddress String
-  nonceHash     String    @unique
-  message       String
-  expiresAt     DateTime
-  usedAt        DateTime?
-  createdAt     DateTime  @default(now())
+  id                 String    @id @default(cuid())
+  walletAddress      String
+  nonceHash          String    @unique
+  message            String
+  expiresAt          DateTime
+  usedAt             DateTime?
+  networkPassphrase  String?   /// Stellar network passphrase committed at challenge creation. Null for legacy challenges.
+  origin             String?   /// Normalized application origin committed at challenge creation. Null for legacy challenges.
+  createdAt          DateTime  @default(now())
 
   @@index([walletAddress])
   @@index([expiresAt])
@@ -344,15 +346,21 @@ model Attestation {
   subjectWalletHash    String
   paymentReferenceHash String?
   type                 AttestationType
+  schemaVersion        String          @default("1.0")
+  signingKeyVersionId  String          @default("1")
   status               ResourceStatus  @default(ACTIVE)
   signedPayload        Json
   expiresAt            DateTime?
   revokedAt            DateTime?
+  revokedBy            String?
+  revocationReason     String?
   createdAt            DateTime        @default(now())
   updatedAt            DateTime        @updatedAt
 
   @@index([issuerId, status])
   @@index([subjectWalletHash])
+  @@index([issuerId, expiresAt])
+  @@index([status, expiresAt])
 }
 
 model VerificationEvent {
