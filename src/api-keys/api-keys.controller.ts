@@ -27,6 +27,8 @@ import { AuthenticatedUser } from "../auth/auth.types";
 import { ApiErrorDto } from "../common/dto/api-error.dto";
 import { SESSION_AUTH_SCHEME } from "../common/swagger/security-schemes";
 import { ApiKeyService } from "./api-key.service";
+import { ApiKeyUsageService } from "./api-key-usage.service";
+import { ApiKeyUsageSummaryDto } from "./dto/api-key-usage-summary.dto";
 import { PrismaService } from "../database/prisma.service";
 import {
   CreateApiKeyDto,
@@ -60,6 +62,7 @@ import {
 export class ApiKeysController {
   constructor(
     private readonly apiKeyService: ApiKeyService,
+    private readonly apiKeyUsageService: ApiKeyUsageService,
     private readonly prisma: PrismaService,
   ) {}
 
@@ -413,6 +416,77 @@ export class ApiKeysController {
       }
       throw error;
     }
+  }
+
+  /**
+   * Get usage summary for an API key.
+   *
+   * Authorization: Organization admin only
+   * Returns: Privacy-safe usage breakdown by category and outcome
+   */
+  @Get(":id/usage")
+  @ApiOperation({
+    summary: "Get usage summary for an API key",
+    description:
+      "Returns a privacy-safe usage breakdown by endpoint category and outcome. " +
+      "Never includes IP addresses, request bodies, path parameters, or user-agent strings. " +
+      "For revoked keys, returns the final frozen snapshot at time of revocation.",
+  })
+  @ApiParam({ name: "id", description: "API key ID.", example: "ckv8v6h2b0000qzrmn831i7rn" })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: "Usage summary for the key.",
+    type: ApiKeyUsageSummaryDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.UNAUTHORIZED,
+    description: "Session token is missing, malformed, invalid, or expired.",
+    type: ApiErrorDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: "The caller is not an administrator of the organization the key belongs to.",
+    type: ApiErrorDto,
+  })
+  async getKeyUsage(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id") keyId: string,
+    @Query() query: OrganizationApiKeysQueryDto = {},
+  ): Promise<ApiKeyUsageSummaryDto> {
+    const organizationId = await this.getAuthorizedOrganizationId(user, query.organizationId);
+    if (!organizationId) {
+      throw new ForbiddenException(
+        "Only organization admins can view API key usage.",
+      );
+    }
+
+    // Verify the key belongs to this organization before returning usage data.
+    const key = await this.prisma.apiKey.findFirst({
+      where: { id: keyId, organizationId },
+      select: { id: true },
+    });
+    if (!key) {
+      throw new ForbiddenException("API key not found");
+    }
+
+    const buckets = await this.apiKeyUsageService.getSummary(keyId);
+
+    const totalRequests = buckets.reduce(
+      (sum, b) => sum + Number(b.requestCount),
+      0,
+    );
+
+    return {
+      keyId,
+      buckets: buckets.map((b) => ({
+        category: b.category,
+        outcome: b.outcome,
+        requestCount: Number(b.requestCount),
+        lastUsedAt: b.lastUsedAt?.toISOString() ?? null,
+        revokedSummaryFrozenAt: b.revokedSummaryFrozenAt?.toISOString() ?? null,
+      })),
+      totalRequests,
+    };
   }
 
   /**

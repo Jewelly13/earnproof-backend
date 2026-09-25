@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException } from "@nestjs/common";
+﻿import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { ApiKeyScope } from "@prisma/client";
 import { AuthenticatedUser } from "../auth/auth.types";
 import { ApiKeysController } from "./api-keys.controller";
@@ -60,6 +60,11 @@ describe("ApiKeysController - Authorization", () => {
     };
     controller = new ApiKeysController(
       apiKeyService as never,
+      {
+        getSummary: jest.fn().mockResolvedValue([]),
+        freezeOnRevocation: jest.fn().mockResolvedValue(undefined),
+        recordUsage: jest.fn().mockResolvedValue(undefined),
+      } as never,
       prismaService as never,
     );
   });
