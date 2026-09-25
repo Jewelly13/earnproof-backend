@@ -473,3 +473,21 @@ model AuthAuditEvent {
   @@index([eventType, createdAt])
   @@index([createdAt])
 }
+
+/// Acknowledgement for an expected / planned contract configuration drift.
+/// Allows operators to suppress blocking drift during upgrades for a bounded window.
+model ContractDriftAcknowledgement {
+  id          String   @id @default(cuid())
+  /// The drift key being acknowledged, e.g. "schema_version_mismatch" or "contract_address_changed".
+  driftKey    String
+  /// Who acknowledged it (actorId from the audit system — never raw PII).
+  acknowledgedBy String
+  /// Human-readable note stored for the audit trail.
+  note        String
+  /// When this acknowledgement expires. After this time it is ignored.
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([driftKey, expiresAt])
+  @@index([expiresAt])
+}
