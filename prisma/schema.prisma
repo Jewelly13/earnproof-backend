@@ -107,6 +107,13 @@ enum ApiKeyScope {
   ORG_ADMIN
 }
 
+enum OrganizationMemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
 model User {
   id                 String          @id @default(cuid())
   walletAddress      String          @unique
@@ -122,6 +129,7 @@ model User {
   proofs             Proof[]
   createdApiKeys     ApiKey[]
   sessions           AuthSession[]
+  organizationMemberships OrganizationMember[]
 
   @@index([walletHash])
   @@index([status])
@@ -185,7 +193,26 @@ model Organization {
   issuers     Issuer[]
   apiKeys     ApiKey[]
   webhooks    Webhook[]
+  members     OrganizationMember[]
 
+  @@index([status])
+}
+
+model OrganizationMember {
+  id             String                    @id @default(cuid())
+  organizationId String
+  organization   Organization              @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  userId         String
+  user           User                      @relation("organizationMemberships", fields: [userId], references: [id], onDelete: Restrict)
+  role           OrganizationMemberRole
+  status         ResourceStatus            @default(ACTIVE)
+  joinedAt       DateTime?
+  createdAt      DateTime                  @default(now())
+  updatedAt      DateTime                  @updatedAt
+
+  @@unique([organizationId, userId])
+  @@index([organizationId])
+  @@index([userId])
   @@index([status])
 }
 
