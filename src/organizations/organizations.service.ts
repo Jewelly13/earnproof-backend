@@ -11,10 +11,14 @@ import { CreateOrganizationDto } from "./dto/create-organization.dto";
 import { ListOrganizationsDto } from "./dto/list-organizations.dto";
 import { OrganizationResponseDto } from "./dto/organization-response.dto";
 import { UpdateOrganizationDto } from "./dto/update-organization.dto";
+import { OrganizationMembersService } from "./organization-members.service";
 
 @Injectable()
 export class OrganizationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly membersService: OrganizationMembersService,
+  ) {}
 
   async createOrganization(
     user: AuthenticatedUser,
@@ -42,6 +46,17 @@ export class OrganizationsService {
         website: input.website || null,
         createdById: user.id,
         status: ResourceStatus.PENDING,
+      },
+    });
+
+    // Create initial OWNER membership for creator
+    await this.prisma.organizationMember.create({
+      data: {
+        organizationId: org.id,
+        userId: user.id,
+        role: "OWNER",
+        status: ResourceStatus.ACTIVE,
+        joinedAt: new Date(),
       },
     });
 
@@ -111,9 +126,14 @@ export class OrganizationsService {
       where.status = query.status;
     }
 
-    // Non-admins only see organizations they created
+    // Non-admins see:
+    // 1. Organizations they created
+    // 2. Organizations where they are members
     if (user.role !== "ADMIN") {
-      where.createdById = user.id;
+      where.OR = [
+        { createdById: user.id },
+        { members: { some: { userId: user.id } } },
+      ];
     }
 
     const [items, total] = await Promise.all([
@@ -161,21 +181,43 @@ export class OrganizationsService {
   }
 
   /**
-   * Fetch ownership and existence in one scoped query. A non-admin receives
-   * the same 404 for another tenant and for an absent/deleted resource, so a
-   * denied request cannot become an existence oracle.
+   * Fetch organization with membership-aware authorization.
+   * A user can view an organization if they are:
+   * - A global admin
+   * - The creator
+   * - A member (any role)
+   * Non-authorized users receive 404 (information hiding).
    */
   private async getVisibleOrganization(
     user: AuthenticatedUser,
     organizationId: string,
   ) {
-    const org = await this.prisma.organization.findFirst({
-      where: user.role === "ADMIN" ? { id: organizationId } : {
-        id: organizationId,
-        createdById: user.id,
-      },
+    const org = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
     });
-    if (!org) throw new NotFoundException("Organization not found");
+
+    if (!org) {
+      throw new NotFoundException("Organization not found");
+    }
+
+    // Check authorization
+    if (user.role === "ADMIN") {
+      return org;
+    }
+
+    if (org.createdById === user.id) {
+      return org;
+    }
+
+    // Check membership
+    const canView = await this.membersService.canViewOrganization(
+      user,
+      organizationId,
+    );
+    if (!canView) {
+      throw new NotFoundException("Organization not found");
+    }
+
     return org;
   }
 
