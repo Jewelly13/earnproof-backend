@@ -146,24 +146,29 @@ model WalletChallenge {
 /// Only a SHA-256 hash of the opaque bearer token is stored — the raw token is never
 /// written to the database or to any application log.
 model AuthSession {
-  id          String    @id @default(cuid())
+  id                 String    @id @default(cuid())
   /// SHA-256 hex digest of the raw opaque session token.
-  tokenHash   String    @unique
-  userId      String
-  user        User      @relation(fields: [userId], references: [id])
-  createdAt   DateTime  @default(now())
-  expiresAt   DateTime
-  lastUsedAt  DateTime?
+  tokenHash          String    @unique
+  userId             String
+  user               User      @relation(fields: [userId], references: [id])
+  createdAt          DateTime  @default(now())
+  expiresAt          DateTime
+  lastUsedAt         DateTime?
   /// Set when the session is explicitly revoked (logout or rotation).
-  revokedAt   DateTime?
+  revokedAt          DateTime?
+  /// Optional device fingerprint for session inventory (e.g., user-agent hash, IP hash).
+  deviceFingerprint  String?
+  /// Optional reason for revocation (e.g., "REMOTE_REVOCATION", "DEVICE_LOSS").
+  revocationReason   String?
   /// Links to the replacement session produced during rotation.
-  rotatedToId String?   @unique
-  rotatedTo   AuthSession? @relation("SessionRotation", fields: [rotatedToId], references: [id])
-  rotatedFrom AuthSession? @relation("SessionRotation")
+  rotatedToId        String?   @unique
+  rotatedTo          AuthSession? @relation("SessionRotation", fields: [rotatedToId], references: [id])
+  rotatedFrom        AuthSession? @relation("SessionRotation")
 
   @@index([userId])
   @@index([expiresAt])
   @@index([revokedAt])
+  @@index([deviceFingerprint])
 }
 
 model Organization {
