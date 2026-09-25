@@ -1,5 +1,4 @@
 import {
-  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -7,6 +6,7 @@ import {
 import { ResourceStatus } from "@prisma/client";
 import { AuthenticatedUser } from "../auth/auth.types";
 import { PrismaService } from "../database/prisma.service";
+import { ConflictException } from "../common/exceptions/domain.exceptions";
 import { CreateOrganizationDto } from "./dto/create-organization.dto";
 import { ListOrganizationsDto } from "./dto/list-organizations.dto";
 import { OrganizationResponseDto } from "./dto/organization-response.dto";
@@ -30,7 +30,7 @@ export class OrganizationsService {
     });
 
     if (existing) {
-      throw new ConflictException(
+      throw new ForbiddenException(
         `Organization with slug "${input.slug}" already exists`,
       );
     }
@@ -42,6 +42,7 @@ export class OrganizationsService {
         website: input.website || null,
         createdById: user.id,
         status: ResourceStatus.PENDING,
+        revision: 0,
       },
     });
 
@@ -62,20 +63,46 @@ export class OrganizationsService {
   ): Promise<OrganizationResponseDto> {
     await this.getVisibleOrganization(user, organizationId);
 
-    const updated = await this.prisma.organization.update({
-      where: { id: organizationId },
+    // Attempt optimistic update with revision check
+    const updated = await this.prisma.organization.updateMany({
+      where: {
+        id: organizationId,
+        revision: input.expectedRevision,
+      },
       data: {
         ...(input.name && { name: input.name }),
         ...(input.website !== undefined && { website: input.website || null }),
+        revision: input.expectedRevision + 1,
       },
+    });
+
+    // If no records were updated, the revision didn't match
+    if (updated.count === 0) {
+      const current = await this.prisma.organization.findUnique({
+        where: { id: organizationId },
+      });
+      if (!current) {
+        throw new NotFoundException(
+          `Organization with ID "${organizationId}" not found`,
+        );
+      }
+      throw new ConflictException(
+        "Organization has been modified by another request. Please refresh and retry.",
+        current.revision,
+      );
+    }
+
+    const result = await this.prisma.organization.findUniqueOrThrow({
+      where: { id: organizationId },
     });
 
     // Log audit event
     await this.createAuditLog(user, "UPDATE", "Organization", organizationId, {
       changes: input,
+      revision: result.revision,
     });
 
-    return this.toResponseDto(updated);
+    return this.toResponseDto(result);
   }
 
   async getOrganization(
@@ -186,6 +213,7 @@ export class OrganizationsService {
       slug: org.slug,
       website: org.website,
       status: org.status,
+      revision: org.revision,
       createdById: org.createdById,
       createdAt: org.createdAt,
       updatedAt: org.updatedAt,
