@@ -1,10 +1,11 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post, UseGuards } from "@nestjs/common";
+﻿import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, UseGuards } from "@nestjs/common";
 import {
   ApiBearerAuth,
   ApiOperation,
   ApiResponse,
   ApiTags,
 } from "@nestjs/swagger";
+import { Request } from "express";
 import { CurrentUser } from "../common/decorators/current-user.decorator";
 import { ApiErrorDto } from "../common/dto/api-error.dto";
 import { AuthGuard } from "../common/guards/auth.guard";
@@ -18,6 +19,9 @@ import { SessionResponseDto } from "./dto/session-response.dto";
 import { VerifyChallengeDto } from "./dto/verify-challenge.dto";
 import { VerifyResponseDto } from "./dto/verify-response.dto";
 import { SessionService } from "./session.service";
+import { RecentAuthService } from "./recent-auth.service";
+import { IssueAssertionDto } from "./dto/issue-assertion.dto";
+import { AssertionResponseDto } from "./dto/assertion-response.dto";
 
 @ApiTags("auth")
 @Controller("auth")
@@ -25,6 +29,7 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly sessionService: SessionService,
+    private readonly recentAuthService: RecentAuthService,
   ) {}
 
   @ApiOperation({
@@ -156,5 +161,46 @@ export class AuthController {
     );
 
     return { token, tokenType: "Bearer", sessionId, expiresAt };
+  }
+
+  @ApiOperation({
+    summary: "Issue a recent-auth assertion",
+    description:
+      "Issues a short-lived (5 minute), single-use assertion token that proves the " +
+      "caller completed wallet re-verification for the specified destructive action. " +
+      "Present the returned token in the `X-Recent-Auth` header when calling the " +
+      "destructive endpoint. Requires an active session (AuthGuard).",
+  })
+  @ApiResponse({
+    status: HttpStatus.CREATED,
+    description: "Assertion issued.",
+    type: AssertionResponseDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.UNAUTHORIZED,
+    description: "Bearer token is missing, malformed, invalid, or expired.",
+  })
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Post("assert")
+  async issueAssertion(
+    @CurrentUser() session: AuthenticatedSession,
+    @Body() body: IssueAssertionDto,
+    @Req() req: Request,
+  ): Promise<AssertionResponseDto> {
+    const origin = String(req.headers["origin"] ?? "null");
+    const resourceId = body.resourceId ?? "*";
+    const { token, expiresAt } = await this.recentAuthService.issue(
+      session.id,
+      body.action,
+      resourceId,
+      origin,
+    );
+    return {
+      token,
+      expiresAt: expiresAt.toISOString(),
+      action: body.action,
+      resourceId,
+    };
   }
 }

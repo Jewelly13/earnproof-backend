@@ -473,3 +473,29 @@ model AuthAuditEvent {
   @@index([eventType, createdAt])
   @@index([createdAt])
 }
+
+/// Short-lived, action-bound assertion issued after wallet re-verification.
+/// Consumed (single-use) when the destructive operation succeeds.
+/// Bound to: userId, action, resourceId (or "*"), origin, network.
+/// Never stores the raw assertion token — only a SHA-256 hash.
+model RecentAuthAssertion {
+  id            String   @id @default(cuid())
+  /// SHA-256 hex digest of the raw opaque assertion token.
+  tokenHash     String   @unique
+  userId        String
+  /// The destructive action this assertion authorises, e.g. "org:delete".
+  action        String
+  /// The resource ID this assertion is bound to, or "*" for any resource.
+  resourceId    String
+  /// SHA-256 of the Origin header at issuance time (never the raw value).
+  originHash    String
+  /// Stellar network passphrase at issuance time.
+  network       String
+  expiresAt     DateTime
+  /// Set when the assertion is consumed by a destructive operation.
+  usedAt        DateTime?
+  createdAt     DateTime @default(now())
+
+  @@index([userId, action, usedAt])
+  @@index([expiresAt])
+}
