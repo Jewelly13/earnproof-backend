@@ -1,12 +1,15 @@
-import {
+﻿﻿import {
   Body,
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Patch,
   Post,
   Query,
+  Req,
   UseGuards,
 } from "@nestjs/common";
 import {
@@ -25,6 +28,7 @@ import { CreateOrganizationDto } from "./dto/create-organization.dto";
 import { ListOrganizationsDto } from "./dto/list-organizations.dto";
 import { OrganizationResponseDto } from "./dto/organization-response.dto";
 import { UpdateOrganizationDto } from "./dto/update-organization.dto";
+import { Request } from "express";
 import { OrganizationsService } from "./organizations.service";
 import { OrganizationMembersService } from "./organization-members.service";
 import { AssignOrganizationMemberDto } from "./dto/assign-organization-member.dto";
@@ -33,6 +37,8 @@ import { UpdateOrganizationMemberRoleDto } from "./dto/update-organization-membe
 import { ListOrganizationMembersDto } from "./dto/list-organization-members.dto";
 import { OrganizationMemberGuard } from "./guards/organization-member.guard";
 import { RequiredOrganizationRole } from "./decorators/required-organization-role.decorator";
+import { RecentAuthGuard, RequireRecentAuth } from "../common/guards/recent-auth.guard";
+import { RecentAuthService, DESTRUCTIVE_ACTIONS } from "../auth/recent-auth.service";
 
 @ApiBearerAuth()
 @ApiTags("organizations")
@@ -41,6 +47,7 @@ export class OrganizationsController {
   constructor(
     private readonly organizationsService: OrganizationsService,
     private readonly membersService: OrganizationMembersService,
+    private readonly recentAuthService: RecentAuthService,
   ) {}
 
   @Post()
@@ -299,5 +306,34 @@ export class OrganizationsController {
     @Param("memberId") memberId: string,
   ) {
     return this.membersService.removeMember(user, organizationId, memberId);
+  @Delete(":id")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(AuthGuard, RoleGuard, RecentAuthGuard)
+  @RequireRecentAuth(DESTRUCTIVE_ACTIONS.ORG_DELETE)
+  @RequiredRole("ADMIN")
+  @ApiOperation({
+    summary: "Delete an organization (destructive — requires recent-auth)",
+    description:
+      "Permanently deletes an organization. Requires a recent-auth assertion token " +
+      "in the X-Recent-Auth header (obtained from POST /auth/assert).",
+  })
+  @ApiResponse({ status: HttpStatus.NO_CONTENT, description: "Organization deleted." })
+  @ApiResponse({ status: 401, description: "Session token invalid.", type: ApiErrorDto })
+  @ApiResponse({ status: 403, description: "Not authorized or recent-auth missing.", type: ApiErrorDto })
+  async deleteOrganization(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id") organizationId: string,
+    @Req() req: Request,
+  ): Promise<void> {
+    const assertionToken = String(req.headers["x-recent-auth"] ?? "");
+    const origin = String(req.headers["origin"] ?? "null");
+    // Consume the assertion — this is the point of no return.
+    await this.recentAuthService.consume({
+      token: assertionToken,
+      action: DESTRUCTIVE_ACTIONS.ORG_DELETE,
+      resourceId: organizationId,
+      origin,
+    });
+    await this.organizationsService.deleteOrganization(user, organizationId);
   }
 }
