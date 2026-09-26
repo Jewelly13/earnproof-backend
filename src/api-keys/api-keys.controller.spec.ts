@@ -60,6 +60,11 @@ describe("ApiKeysController - Authorization", () => {
     };
     controller = new ApiKeysController(
       apiKeyService as never,
+      {
+        getSummary: jest.fn().mockResolvedValue([]),
+        freezeOnRevocation: jest.fn().mockResolvedValue(undefined),
+        recordUsage: jest.fn().mockResolvedValue(undefined),
+      } as never,
       { consume: jest.fn().mockResolvedValue({ userId: 'user_1' }), issue: jest.fn().mockResolvedValue({ token: 'tok', expiresAt: new Date() }) } as never,
       prismaService as never,
     );

@@ -407,6 +407,7 @@ model ApiKey {
   revokedAt      DateTime?
   expiresAt      DateTime?
   createdAt      DateTime        @default(now())
+  usageSummaries ApiKeyUsageSummary[]
 
   @@index([organizationId, status])
   @@index([prefix])
@@ -518,6 +519,42 @@ model AuthAuditEvent {
   @@index([createdAt])
 }
 
+enum ApiKeyEndpointCategory {
+  PROOF
+  PAYMENT
+  CREDENTIAL
+  ORGANIZATION
+  AUTH_CONTEXT
+  OTHER
+}
+
+enum ApiKeyUsageOutcome {
+  SUCCESS
+  FORBIDDEN
+  ERROR
+}
+
+/// Privacy-safe per-key, per-category, per-outcome usage summary.
+/// Incremented atomically via a raw SQL upsert. Never stores IP addresses,
+/// request bodies, path parameters, or user-agent strings.
+model ApiKeyUsageSummary {
+  id                     String                  @id @default(cuid())
+  apiKeyId               String
+  apiKey                 ApiKey                  @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+  category               ApiKeyEndpointCategory
+  outcome                ApiKeyUsageOutcome
+  requestCount           BigInt                  @default(0)
+  /// Rounded to the nearest minute — recency signal without per-request timing.
+  lastUsedAt             DateTime?
+  /// Set once when the parent key is revoked. Row is not updated after this.
+  revokedSummaryFrozenAt DateTime?
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+
+  @@unique([apiKeyId, category, outcome])
+  @@index([apiKeyId])
+  @@index([lastUsedAt])
+}
 /// Replay-protection nonce store for signed API requests.
 /// Each row represents a nonce that has been consumed within the active clock window.
 /// Rows are valid only until expiresAt; a background job (or query-time filter) purges expired rows.

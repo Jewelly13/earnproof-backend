@@ -1,6 +1,7 @@
 ﻿import { Module } from "@nestjs/common";
 import { AuthModule } from "../auth/auth.module";
 import { ApiKeyService } from "./api-key.service";
+import { ApiKeyUsageService } from "./api-key-usage.service";
 import { ApiKeysController } from "./api-keys.controller";
 import { ApiKeyGuard } from "../common/guards/api-key.guard";
 import { RequestSigningGuard } from "../common/guards/request-signing.guard";
@@ -11,6 +12,8 @@ import { IntegrationAuthController } from "./integration-auth.controller";
 @Module({
   imports: [AuthModule],
   controllers: [ApiKeysController, IntegrationAuthController],
+  providers: [ApiKeyService, ApiKeyUsageService, ApiKeyGuard, ScopesGuard],
+  exports: [ApiKeyService, ApiKeyUsageService, ApiKeyGuard, ScopesGuard],
   providers: [
     ApiKeyService,
     ApiKeyGuard,
