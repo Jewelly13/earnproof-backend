@@ -107,6 +107,12 @@ enum ApiKeyScope {
   ORG_ADMIN
 }
 
+enum IdempotencyStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
 model User {
   id                 String          @id @default(cuid())
   walletAddress      String          @unique
@@ -179,8 +185,38 @@ model Organization {
   issuers     Issuer[]
   apiKeys     ApiKey[]
   webhooks    Webhook[]
+  idempotencyRecords IdempotencyRecord[]
 
   @@index([status])
+}
+
+/// Stores idempotency records to prevent duplicate mutations within an organization.
+/// Indexed by (organizationId, idempotencyKey) to enforce uniqueness and enable O(1) lookup.
+/// The requestFingerprint is checked on incoming requests; if the key exists but fingerprint
+/// differs, the request is rejected with a 409 Conflict.
+model IdempotencyRecord {
+  id                 String             @id @default(cuid())
+  organizationId     String
+  organization       Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// User-supplied idempotency key from the request header.
+  idempotencyKey     String             @db.VarChar(255)
+  /// Hash of the request: method + path + body (to detect payload conflicts).
+  requestFingerprint String
+  /// Lifecycle: PENDING → COMPLETED | FAILED
+  status             IdempotencyStatus  @default(PENDING)
+  /// The response body, with secrets stripped (JSON serialized).
+  responseBody       Json?
+  /// HTTP status code of the stored response (e.g., 201, 200).
+  responseStatusCode Int?
+  /// Timestamp when this record should be considered expired (for cleanup).
+  expiresAt          DateTime
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  /// Unique constraint on (organizationId, idempotencyKey) to prevent duplicate keys within an org.
+  /// Also serves as the compound index for fast lookups.
+  @@unique([organizationId, idempotencyKey])
+  @@index([organizationId, expiresAt])
 }
 
 model Issuer {
