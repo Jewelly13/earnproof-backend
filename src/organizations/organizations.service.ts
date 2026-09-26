@@ -1,4 +1,4 @@
-import {
+﻿import {
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -144,6 +144,22 @@ export class OrganizationsService {
       page,
       limit,
     };
+  }
+
+  async deleteOrganization(
+    user: AuthenticatedUser,
+    organizationId: string,
+  ): Promise<void> {
+    await this.getVisibleOrganization(user, organizationId);
+
+    await this.prisma.organization.update({
+      where: { id: organizationId },
+      data: { status: ResourceStatus.DELETED },
+    });
+
+    await this.createAuditLog(user, "DELETE", "Organization", organizationId, {
+      deletedAt: new Date().toISOString(),
+    });
   }
 
   async getOrganizationById(organizationId: string) {
