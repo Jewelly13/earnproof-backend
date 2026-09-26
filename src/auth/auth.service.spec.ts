@@ -19,6 +19,8 @@ const challenge = {
   message: "EarnProof wallet authentication",
   expiresAt: new Date(Date.now() + 60_000),
   usedAt: null,
+  networkPassphrase: "Test SDF Network ; September 2015",
+  origin: "http://localhost:3000",
 };
 
 const dbUser = {
