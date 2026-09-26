@@ -1,4 +1,4 @@
-import {
+﻿import {
   Body,
   Controller,
   Delete,
@@ -29,6 +29,8 @@ import { SESSION_AUTH_SCHEME } from "../common/swagger/security-schemes";
 import { ApiKeyService } from "./api-key.service";
 import { ApiKeyUsageService } from "./api-key-usage.service";
 import { ApiKeyUsageSummaryDto } from "./dto/api-key-usage-summary.dto";
+import { RecentAuthGuard, RequireRecentAuth } from "../common/guards/recent-auth.guard";
+import { RecentAuthService, DESTRUCTIVE_ACTIONS } from "../auth/recent-auth.service";
 import { PrismaService } from "../database/prisma.service";
 import {
   CreateApiKeyDto,
@@ -63,6 +65,7 @@ export class ApiKeysController {
   constructor(
     private readonly apiKeyService: ApiKeyService,
     private readonly apiKeyUsageService: ApiKeyUsageService,
+    private readonly recentAuthService: RecentAuthService,
     private readonly prisma: PrismaService,
   ) {}
 
@@ -332,6 +335,8 @@ export class ApiKeysController {
    * Returns: 204 No Content
    * Effect: Revoked key is rejected by auth guard immediately
    */
+  @UseGuards(RecentAuthGuard)
+  @RequireRecentAuth(DESTRUCTIVE_ACTIONS.KEY_REVOKE)
   @Delete(":id")
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
@@ -383,7 +388,18 @@ export class ApiKeysController {
     user: AuthenticatedUser,
     keyId: string,
     query: OrganizationApiKeysQueryDto,
+    assertionToken?: string,
+    origin?: string,
   ) {
+    // Consume the recent-auth assertion (single-use) if provided.
+    if (assertionToken) {
+      await this.recentAuthService.consume({
+        token: assertionToken,
+        action: DESTRUCTIVE_ACTIONS.KEY_REVOKE,
+        resourceId: keyId,
+        origin: origin ?? "null",
+      });
+    }
     // Authorization: User must be organization admin
     const organizationId = await this.getAuthorizedOrganizationId(
       user,

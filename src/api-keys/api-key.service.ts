@@ -17,6 +17,41 @@ import { ApiKeyUsageService } from "./api-key-usage.service";
  * - Injects ApiKeyUsageService to call freezeOnRevocation() during revokeKey().
  * - recordKeyUsage() is kept for backward compatibility; new code should use
  *   ApiKeyUsageService.recordUsage() directly (via the guard).
+ * SECURITY POSTURE: This service implements constant-time verification to prevent timing attacks
+ * on secret authentication. See verifySecret() for detailed constant-time design.
+ *
+ * Design decisions:
+ *
+ * 1. Hashing algorithm: SHA-256 (fast cryptographic hash, not bcrypt)
+ *    - API keys are high-entropy random secrets (32 bytes), not weak human passwords
+ *    - SHA-256 is the standard for API key hashing in industry (e.g., GitHub, Stripe)
+ *    - bcrypt's slow-hash design is for defending against brute-force on weak passwords
+ *    - Against brute-force on high-entropy random secrets, SHA-256 + salt is sufficient
+ *    - This codebase already uses SHA-256 for other credentials (proof hashes, wallet hashes)
+ *    - Reasoning: consistent with existing patterns, appropriate for threat model
+ *
+ * 2. Key format: 32 bytes (256 bits) of randomness, base64url-encoded
+ *    - Yields ~43 characters when encoded
+ *    - Prefix: first 8 characters (32 bits of entropy for human recognition)
+ *    - Sufficient entropy for cryptographic security
+ *
+ * 3. Secret display: returned ONCE on creation/rotation, never stored/retrievable
+ *    - API key lifecycle: generate → hash → store hash+prefix → display secret once → never again
+ *    - No code path can reconstruct or re-display the raw secret
+ *
+ * 4. Organization isolation: enforced at query level, not surface-level checks
+ *    - Every lookup includes organizationId filter
+ *    - Cannot list/rotate/revoke another org's keys even with valid token
+ *
+ * 5. Audit logging: records administrative actions (create, rotate, revoke, use)
+ *    - Never logs raw secrets or hashes
+ *    - Logs only non-sensitive identifiers: keyId, prefix, organizationId, actor
+ *    - Timestamps and action types for complete audit trail
+ *
+ * 6. Constant-time verification: prevents timing side-channel attacks
+ *    - All verification attempts follow identical code paths regardless of input format
+ *    - Format validation does not short-circuit before cryptographic comparison
+ *    - See verifySecret() for implementation details
  */
 @Injectable()
 export class ApiKeyService {
@@ -48,6 +83,81 @@ export class ApiKeyService {
     try {
       return timingSafeEqual(Buffer.from(computedHash, "hex"), hashBufferToCompare);
     } catch {
+  /**
+   * Verify a presented secret against a stored hash.
+   * Returns true if they match (constant-time comparison).
+   *
+   * SECURITY: This method is designed to execute in constant time regardless of:
+   *   - Whether storedHash is correctly formatted
+   *   - Whether storedHash matches the computed hash
+   *   - Input lengths or validity
+   *
+   * Timing attacks exploit variable execution time to infer information about
+   * secrets or hash formats. This implementation prevents timing leakage by:
+   *   1. Computing the hash of the presented secret (unavoidable baseline work)
+   *   2. Performing format validation in constant time (not regex, which short-circuits)
+   *   3. Always attempting decoding and comparison regardless of format validity
+   *   4. Using a dummy buffer if decoding fails (ensures same execution path)
+   *   5. Using timingSafeEqual for the final comparison (Node.js crypto primitive)
+   *
+   * Malformed inputs (invalid hex, wrong length, etc.) follow the same codepath
+   * as valid-format inputs, ensuring no timing distinction.
+   *
+   * @param secret - Presented secret from client
+   * @param storedHash - Stored hash from database (expected: 64 hex chars)
+   * @returns true if secret hashes to storedHash, false otherwise
+   */
+  verifySecret(secret: string, storedHash: string): boolean {
+    const computedHash = this.hashSecret(secret);
+    const computedBuffer = Buffer.from(computedHash, "hex");
+
+    // Constant-time format validation: check length and character validity
+    // without short-circuiting. SHA-256 hashes are exactly 64 hex characters.
+    const EXPECTED_HEX_LENGTH = 64;
+    let isValidFormat = true;
+
+    // Check length in constant time
+    if (storedHash.length !== EXPECTED_HEX_LENGTH) {
+      isValidFormat = false;
+    }
+
+    // Check each character is valid hex [a-fA-F0-9] in constant time
+    // Do NOT use early returns or short-circuit logic
+    for (let i = 0; i < EXPECTED_HEX_LENGTH; i++) {
+      const char = storedHash.charCodeAt(i);
+      // Check if char is 0-9 (48-57), a-f (97-102), or A-F (65-70)
+      const isDigit = char >= 48 && char <= 57;
+      const isLowerHex = char >= 97 && char <= 102;
+      const isUpperHex = char >= 65 && char <= 70;
+      if (!(isDigit || isLowerHex || isUpperHex)) {
+        isValidFormat = false;
+      }
+    }
+
+    // Decode hex to buffer, using dummy if format is invalid
+    // This ensures all inputs follow the same comparison path
+    let storedBuffer: Buffer;
+    try {
+      // Buffer.from() with 'hex' encoding will throw if the string contains
+      // invalid hex characters or has odd length. We catch and use dummy.
+      storedBuffer = Buffer.from(storedHash, "hex");
+      // Additional safety: verify the decoded buffer is the correct length
+      if (storedBuffer.length !== 32) {
+        // Not 32 bytes (256 bits), which SHA-256 always produces
+        storedBuffer = Buffer.alloc(32);
+      }
+    } catch {
+      // Decoding failed: use dummy buffer of correct length (32 bytes)
+      // This ensures timing is identical whether parsing succeeds or fails
+      storedBuffer = Buffer.alloc(32);
+    }
+
+    // Compare in constant time using Node.js crypto primitive
+    try {
+      return timingSafeEqual(computedBuffer, storedBuffer);
+    } catch {
+      // timingSafeEqual only throws if buffer lengths differ.
+      // This should not occur given our allocation strategy, but guard anyway.
       return false;
     }
   }
